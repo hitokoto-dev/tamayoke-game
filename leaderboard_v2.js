@@ -27,23 +27,34 @@
     el.innerHTML = '';
     (list || []).forEach((row, i)=>{
       const li = document.createElement('li');
-      // GAS 側は {name, score, date} 形式を返す想定
       const name = row.name ?? row.Name ?? '??';
       const score = (row.score ?? row.Score ?? 0) | 0;
       li.textContent = `${i+1}. ${name} — ${score}`;
       el.appendChild(li);
     });
   }
+
+  // ======== ランキング取得（重複防止つき） ========
+  let _lbLoading = false, _lastJSON = '';
   async function fetchLeaderboard(){
     if(!LB_API.includes('/exec')) return;
+    if(_lbLoading) return;
+    _lbLoading = true;
     try{
-      const res = await fetch(`${LB_API}?action=top`, { method:'GET' });
+      const res = await fetch(`${LB_API}?action=top`, { method:'GET', cache:'no-store' });
       const data = await res.json();
-      renderLeaderboard(Array.isArray(data) ? data : []);
+      const json = JSON.stringify(data);
+      if (json !== _lastJSON) {
+        renderLeaderboard(Array.isArray(data) ? data : []);
+        _lastJSON = json;
+      }
     }catch(e){
       console.warn('LB fetch error', e);
+    }finally{
+      _lbLoading = false;
     }
   }
+
   function updateMyBestLabel(){
     try{
       const bestLabel = document.getElementById('mybest');
@@ -57,7 +68,7 @@
   async function submitScore(name, score){
     if(!LB_API.includes('/exec')) return;
     const now = Date.now();
-    if(now - _lastSubmitAt < 3000) return; // 3秒レート制限
+    if(now - _lastSubmitAt < 3000) return;
     _lastSubmitAt = now;
 
     name = String(name || '').replace(/[<>]/g,'').slice(0,20);
@@ -85,24 +96,23 @@
 
     const orig = g.gameOver;
     const wrapped = function(reason){
+      // ★スコアを先に保存（元の処理で0にされるのを防ぐ）
+      const finalScoreSnap = Math.floor(Number(g.score) || 0);
+      const bestSnap       = Math.floor(Number(g.hiscore) || 0);
+
       try{
-        // 既存の gameOver を先に実行（UI更新やhiscore保存など）
         orig.apply(this, arguments);
       } finally {
-        // 表示更新
         updateMyBestLabel();
-        // 新記録なら名前入力して送信
         try{
-          const finalScore = Math.floor(g.score || 0);
-          const best = Math.floor(g.hiscore || 0);
-          if(finalScore >= best){
+          if(finalScoreSnap >= bestSnap){
             let nick = '';
             try { nick = localStorage.getItem('dodge_nick') || ''; } catch(_){}
             nick = prompt('新記録！ニックネームを入力してください（20文字まで）', nick || '');
             if(nick){
               nick = String(nick).trim().slice(0,20);
               try { localStorage.setItem('dodge_nick', nick); } catch(_){}
-              submitScore(nick, finalScore);
+              submitScore(nick, finalScoreSnap);
             }
           }
         }catch(e){
@@ -122,8 +132,7 @@
     fetchLeaderboard();
     setTimeout(updateMyBestLabel, 300);
 
-    // gameOver が後から定義される可能性に備えてリトライ
-    let retries = 40; // 約20秒
+    let retries = 40;
     (function waitHook(){
       if (tryInstallHook()) return;
       if (--retries <= 0) return;
