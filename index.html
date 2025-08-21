@@ -331,7 +331,31 @@ function drawPlayer(g,p){
   else { let col=getComputedStyle(document.documentElement).getPropertyValue('--accent')||'#ff7f2a'; const base=p.size*VIS_SCALE; g.fillStyle=col; g.beginPath(); g.moveTo(p.x, p.y - base); g.lineTo(p.x - base*0.9, p.y + base*0.8); g.lineTo(p.x + base*0.9, p.y + base*0.8); g.closePath(); g.fill(); g.lineWidth=2; g.strokeStyle='#ffffff22'; g.stroke(); }
   g.restore();
 }
-function gameOver(){ dead=true; paused=true; running=false; overlay.hidden=false; overlay.style.display='flex'; ovTitle.textContent='ゲームオーバー'; try{ hiscore=Math.max(hiscore, Math.floor(score)); localStorage.setItem('dodge_hi', String(hiscore)); }catch(e){} ovText.innerHTML=`Score: <b>${Math.floor(score)}</b> / Best: <b>${hiscore}</b><br>R/⟲でリトライ / スペース/タップで再開`; stopBonusLoop(); stopBGM(); sfx('explode'); }
+function gameOver(reason='hit'){
+  // ★ score を先に確定（以後リセットされてもOK）
+  const finalScore = Math.floor(score);
+
+  dead = true; paused = true; running = false;
+  overlay.hidden = false; overlay.style.display = 'flex';
+  ovTitle.textContent = 'ゲームオーバー';
+
+  try{
+    hiscore = Math.max(hiscore, finalScore);
+    localStorage.setItem('dodge_hi', String(hiscore));
+  }catch(e){}
+
+  ovText.innerHTML = `Score: <b>${finalScore}</b> / Best: <b>${hiscore}</b><br>Rでリトライ / スペースで再開`;
+
+  stopBonusLoop();
+  stopBGM();
+  sfx('explode');
+
+  // ★ リーダーボード送信（0点は送らない）
+  if (typeof window.lbOnGameOver === 'function' && finalScore > 0) {
+    // 0ms 遅延で UI 更新を邪魔しない
+    setTimeout(()=> window.lbOnGameOver(finalScore, Math.floor(hiscore)), 0);
+  }
+}
 function togglePause(){ if(!running) return; paused=!paused; overlay.hidden=!paused; overlay.style.display=paused?'flex':'none'; ovTitle.textContent=paused?'一時停止':''; ovText.textContent=paused?'タップ/スペースで再開 / ⟲でリトライ':''; if(!paused){ startBGM(); } else { stopBGM(); sfx('pause'); } }
 function resumeIfPaused(){ if(dead){ restart(); return; } if(!running){ start(); } else if(paused){ togglePause(); } }
 function start(){ const chosen=(themeCool?.checked && 'cool') || (themeCute?.checked && 'cute') || 'normal'; applyTheme(chosen); initAudio(); if(audioCtx && audioCtx.state==='suspended'){ audioCtx.resume(); } running=true; paused=false; dead=false; overlay.hidden=true; overlay.style.display='none'; time=0; score=0; difficulty=1; bullets.length=0; player.x=W*0.5; player.y=H*0.85; banners.length=0; nextScoreMilestone=2000; milestoneCount=0; setupWaves(); startBGM(); }
