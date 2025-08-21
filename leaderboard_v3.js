@@ -1,14 +1,11 @@
 // === leaderboard_v3.js ===
-// /exec を差し替えてください
 const LB_API = 'https://script.google.com/macros/s/AKfycbwlrOafQsgNUHLpNyUK08ssegJvAeXvE8uJxQVerDBaEfifIH2txn3r0j4ps1PHdTwq/exec';
+const SEND_ONLY_ON_BEST = true; // 新記録のみ送信（falseにすると毎回送信）
 
 (function(){
   const g = (typeof window!=='undefined')?window:globalThis;
-
-  // 重複設置防止
   if (g.__LBV3__) return; g.__LBV3__ = true;
 
-  // --- UI パネル（無ければ作る） ---
   function ensurePanel(){
     if (document.getElementById('leaderboard')) return;
     const container = document.querySelector('.row') || document.body;
@@ -20,13 +17,11 @@ const LB_API = 'https://script.google.com/macros/s/AKfycbwlrOafQsgNUHLpNyUK08sse
       <div id="mybest" style="opacity:.9;margin-top:6px;"></div>`;
     container.appendChild(sec);
   }
-
   function setMyBest(v){
     const el = document.getElementById('mybest');
     if (el) el.textContent = `あなたのベスト：${v|0}`;
   }
 
-  // --- 取得と描画（重複除去） ---
   let loading=false, lastJson='';
   async function fetchLB(){
     if(!LB_API.includes('/exec') || loading) return;
@@ -41,8 +36,6 @@ const LB_API = 'https://script.google.com/macros/s/AKfycbwlrOafQsgNUHLpNyUK08sse
       const el = document.getElementById('leaderboard');
       if (!el) return;
       el.innerHTML = '';
-
-      // (name,score) で重複除去＋上位10件だけ
       const seen = new Set();
       let rank=0;
       (Array.isArray(data)?data:[]).forEach(r=>{
@@ -55,27 +48,25 @@ const LB_API = 'https://script.google.com/macros/s/AKfycbwlrOafQsgNUHLpNyUK08sse
         li.textContent = `${rank}. ${name} — ${score}`;
         el.appendChild(li);
       });
-    }catch(e){
-      console.warn('LB fetch error', e);
-    }finally{
-      loading=false;
-    }
+    }catch(e){ console.warn('LB fetch error', e); }
+    finally { loading=false; }
   }
 
-  // --- 外部から“確実に”呼ばれる受付口（ここがポイント） ---
-  // ゲーム側から window.lbOnGameOver(score, hiscore) を1行呼ぶだけで送信します
+  // ゲーム側から明示的に呼ぶ受付口
   let lastSubmitAt = 0;
   g.lbOnGameOver = async function(finalScore, hiscore){
-    try{ setMyBest(hiscore|0); }catch(_){}
+    const s = Math.floor(Number(finalScore) || 0);
+    const best = Math.floor(Number(hiscore) || 0);
+    setMyBest(best);
+
+    // 0点は送らない（誤送信防止）
+    if (s <= 0) { fetchLB(); return; }
+
+    if (SEND_ONLY_ON_BEST && s < best) { fetchLB(); return; }
+
     const now = Date.now();
-    if (now - lastSubmitAt < 2000) return; // 連打防止
+    if (now - lastSubmitAt < 2000) { fetchLB(); return; }
     lastSubmitAt = now;
-
-    const s = Math.floor(Number(finalScore)||0);
-    let best = Math.floor(Number(hiscore)||0);
-
-    // 新記録でないときは送らない（好みで true に）
-    if (s < best) { fetchLB(); return; }
 
     let nick = '';
     try { nick = localStorage.getItem('dodge_nick') || ''; } catch(_){}
@@ -87,22 +78,17 @@ const LB_API = 'https://script.google.com/macros/s/AKfycbwlrOafQsgNUHLpNyUK08sse
     const body = new URLSearchParams({ name:nick, score:String(s), _ua:navigator.userAgent.slice(0,60) });
     try {
       await fetch(LB_API, { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
-      fetchLB(); // 送信後更新
+      fetchLB();
     } catch(e) {
       console.warn('LB submit error', e);
     }
   };
 
-  // --- 初期化 ---
   function init(){
     ensurePanel();
     fetchLB();
-    // 30秒に1回くらい更新
     setInterval(fetchLB, 30000);
   }
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
 })();
