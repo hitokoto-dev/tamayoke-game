@@ -1,11 +1,15 @@
 // === leaderboard_v3.js ===
+// ★あなたの GAS /exec URL に置き換えてください
 const LB_API = 'https://script.google.com/macros/s/AKfycbwlrOafQsgNUHLpNyUK08ssegJvAeXvE8uJxQVerDBaEfifIH2txn3r0j4ps1PHdTwq/exec';
-const SEND_ONLY_ON_BEST = true; // 新記録のみ送信（falseにすると毎回送信）
+
+// 新記録のみ送信したいなら true、毎回送信で動作確認するなら false
+const SEND_ONLY_ON_BEST = true;
 
 (function(){
   const g = (typeof window!=='undefined')?window:globalThis;
   if (g.__LBV3__) return; g.__LBV3__ = true;
 
+  // ---- UI（無ければ作る） ----
   function ensurePanel(){
     if (document.getElementById('leaderboard')) return;
     const container = document.querySelector('.row') || document.body;
@@ -22,6 +26,7 @@ const SEND_ONLY_ON_BEST = true; // 新記録のみ送信（falseにすると毎�
     if (el) el.textContent = `あなたのベスト：${v|0}`;
   }
 
+  // ---- 取得＆描画（重複除去）----
   let loading=false, lastJson='';
   async function fetchLB(){
     if(!LB_API.includes('/exec') || loading) return;
@@ -36,6 +41,7 @@ const SEND_ONLY_ON_BEST = true; // 新記録のみ送信（falseにすると毎�
       const el = document.getElementById('leaderboard');
       if (!el) return;
       el.innerHTML = '';
+
       const seen = new Set();
       let rank=0;
       (Array.isArray(data)?data:[]).forEach(r=>{
@@ -48,20 +54,22 @@ const SEND_ONLY_ON_BEST = true; // 新記録のみ送信（falseにすると毎�
         li.textContent = `${rank}. ${name} — ${score}`;
         el.appendChild(li);
       });
-    }catch(e){ console.warn('LB fetch error', e); }
-    finally { loading=false; }
+    }catch(e){
+      console.warn('LB fetch error', e);
+    }finally{
+      loading=false;
+    }
   }
 
-  // ゲーム側から明示的に呼ぶ受付口
+  // ---- ゲームから呼ぶ“入口” ----
+  // ゲーム側 gameOver() で： window.lbOnGameOver(finalScore, hiscore) を呼びます
   let lastSubmitAt = 0;
   g.lbOnGameOver = async function(finalScore, hiscore){
     const s = Math.floor(Number(finalScore) || 0);
     const best = Math.floor(Number(hiscore) || 0);
     setMyBest(best);
 
-    // 0点は送らない（誤送信防止）
     if (s <= 0) { fetchLB(); return; }
-
     if (SEND_ONLY_ON_BEST && s < best) { fetchLB(); return; }
 
     const now = Date.now();
@@ -84,10 +92,11 @@ const SEND_ONLY_ON_BEST = true; // 新記録のみ送信（falseにすると毎�
     }
   };
 
+  // ---- 初期化 ----
   function init(){
     ensurePanel();
     fetchLB();
-    setInterval(fetchLB, 30000);
+    setInterval(fetchLB, 30000); // 30秒毎に更新
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
