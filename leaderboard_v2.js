@@ -1,7 +1,7 @@
 (function(){
   // ========= 設定 =========
   // ★必ず、あなたの GAS Webアプリ URL（/exec で終わる）に置き換えてください
-  const LB_API = 'https://hitokoto-dev.github.io/tamayoke-game/exec';
+  const LB_API = 'https://script.google.com/macros/s/AKfycbwlrOafQsgNUHLpNyUK08ssegJvAeXvE8uJxQVerDBaEfifIH2txn3r0j4ps1PHdTwq/exec';
 
   // ========= 内部状態 =========
   const g = (typeof window !== 'undefined') ? window : globalThis;
