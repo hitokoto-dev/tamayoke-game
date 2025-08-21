@@ -5,15 +5,24 @@
 
   // ========= 内部状態 =========
   const g = (typeof window !== 'undefined') ? window : globalThis;
+
+  // 二重読み込み・多重フック防止（グローバルにフラグ）
+  if (g.__LB_INSTALLED__) return;
+  g.__LB_INSTALLED__ = true;
+
   let _lastSubmitAt = 0;
-  let _hookInstalled = false;
+  let _lbLoading = false, _lastJSON = '';
 
   // ========= UI =========
   function ensureLeaderboardPanel(){
+    // 既に #leaderboard があれば作らない（自前設置にも対応）
     if (document.getElementById('leaderboard')) return;
+    if (document.querySelector('[data-lb-panel="1"]')) return;
+
     const container = document.querySelector('.row') || document.body;
     const sec = document.createElement('section');
     sec.className = 'panel';
+    sec.setAttribute('data-lb-panel','1');
     sec.innerHTML = [
       '<h3>ランキング TOP10</h3>',
       '<ol id="leaderboard" style="padding-left:18px;margin:6px 0;"></ol>',
@@ -21,30 +30,40 @@
     ].join('');
     container.appendChild(sec);
   }
+
   function renderLeaderboard(list){
     const el = document.getElementById('leaderboard');
     if(!el) return;
     el.innerHTML = '';
-    (list || []).forEach((row, i)=>{
-      const li = document.createElement('li');
+
+    // 同一 (name, score) の重複を抑止（見た目の重複対策）
+    const seen = new Set();
+    let rank = 0;
+    (list || []).forEach(row=>{
       const name = row.name ?? row.Name ?? '??';
       const score = (row.score ?? row.Score ?? 0) | 0;
-      li.textContent = `${i+1}. ${name} — ${score}`;
+      const key = `${name}|${score}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      rank++;
+      if (rank > 10) return;
+
+      const li = document.createElement('li');
+      li.textContent = `${rank}. ${name} — ${score}`;
       el.appendChild(li);
     });
   }
 
   // ======== ランキング取得（重複防止つき） ========
-  let _lbLoading = false, _lastJSON = '';
   async function fetchLeaderboard(){
     if(!LB_API.includes('/exec')) return;
-    if(_lbLoading) return;
+    if(_lbLoading) return;              // 多重呼び出し防止
     _lbLoading = true;
     try{
       const res = await fetch(`${LB_API}?action=top`, { method:'GET', cache:'no-store' });
       const data = await res.json();
       const json = JSON.stringify(data);
-      if (json !== _lastJSON) {
+      if (json !== _lastJSON) {         // 前回と同じなら再描画しない
         renderLeaderboard(Array.isArray(data) ? data : []);
         _lastJSON = json;
       }
@@ -58,8 +77,11 @@
   function updateMyBestLabel(){
     try{
       const bestLabel = document.getElementById('mybest');
-      if (bestLabel && typeof g.hiscore !== 'undefined') {
-        bestLabel.textContent = `あなたのベスト：${g.hiscore | 0}`;
+      // hiscore は let で定義されている可能性があるので両対応
+      let best = 0;
+      try { best = Math.floor(Number((typeof hiscore !== 'undefined' ? hiscore : (g.hiscore ?? 0)))); } catch(_){}
+      if (bestLabel && !Number.isNaN(best)) {
+        bestLabel.textContent = `あなたのベスト：${best}`;
       }
     }catch(_){}
   }
@@ -68,7 +90,7 @@
   async function submitScore(name, score){
     if(!LB_API.includes('/exec')) return;
     const now = Date.now();
-    if(now - _lastSubmitAt < 3000) return;
+    if(now - _lastSubmitAt < 3000) return; // 3秒レート制限
     _lastSubmitAt = now;
 
     name = String(name || '').replace(/[<>]/g,'').slice(0,20);
@@ -83,7 +105,7 @@
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body
       });
-      fetchLeaderboard();
+      fetchLeaderboard(); // 送信後に更新
     }catch(e){
       console.warn('LB submit error', e);
     }
@@ -91,16 +113,18 @@
 
   // ========= gameOver フック =========
   function tryInstallHook(){
-    if(_hookInstalled) return true;
-    if(typeof g.gameOver !== 'function') return false;
+    if (g.__LB_HOOK_INSTALLED__) return true;
+    if (typeof g.gameOver !== 'function') return false;
 
     const orig = g.gameOver;
     const wrapped = function(reason){
-      // ★スコアを先に保存（元の処理で0にされるのを防ぐ）
-      const finalScoreSnap = Math.floor(Number(g.score) || 0);
-      const bestSnap       = Math.floor(Number(g.hiscore) || 0);
+      // ★ スコアを先にスナップショット（元の処理で0にされるのを防ぐ）
+      let finalScoreSnap = 0, bestSnap = 0;
+      try { finalScoreSnap = Math.floor(Number((typeof score   !== 'undefined' ? score   : (g.score   ?? 0)))); } catch(_){}
+      try { bestSnap       = Math.floor(Number((typeof hiscore !== 'undefined' ? hiscore : (g.hiscore ?? 0)))); } catch(_){}
 
       try{
+        // ゲーム側の処理（UI更新・hiscore保存など）
         orig.apply(this, arguments);
       } finally {
         updateMyBestLabel();
@@ -112,7 +136,7 @@
             if(nick){
               nick = String(nick).trim().slice(0,20);
               try { localStorage.setItem('dodge_nick', nick); } catch(_){}
-              submitScore(nick, finalScoreSnap);
+              submitScore(nick, finalScoreSnap); // ★ スナップショットを送信
             }
           }
         }catch(e){
@@ -122,7 +146,7 @@
     };
     wrapped.__wrapped__ = true;
     g.gameOver = wrapped;
-    _hookInstalled = true;
+    g.__LB_HOOK_INSTALLED__ = true;
     return true;
   }
 
@@ -132,7 +156,8 @@
     fetchLeaderboard();
     setTimeout(updateMyBestLabel, 300);
 
-    let retries = 40;
+    // gameOver が後から定義されるケースに備えてリトライ
+    let retries = 40; // 約20秒
     (function waitHook(){
       if (tryInstallHook()) return;
       if (--retries <= 0) return;
